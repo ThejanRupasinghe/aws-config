@@ -1,0 +1,40 @@
+{
+  "objects": [
+    {
+      "failureAndRerunMode": "CASCADE",
+      "resourceRole": "DataPipelineDefaultResourceRole",
+      "role": "DataPipelineDefaultRole",
+      "pipelineLogUri": "s3://s3-pipeline-emr/logs/",
+      "scheduleType": "ONDEMAND",
+      "name": "Default",
+      "id": "Default"
+    },
+    {
+      "role": "DataPipelineDefaultRole",
+      "subject": "Word Count Pipeline",
+      "name": "WordCountEmrSNS",
+      "id": "ActionId_r2vGe",
+      "message": "Word Count Completed",
+      "type": "SnsAlarm",
+      "topicArn": "arn:aws:sns:us-east-1:490982693988:pipeline-emr-topic"
+    },
+    {
+      "name": "WordCountEmrActivity",
+      "step": "/home/hadoop/contrib/streaming/hadoop-streaming.jar,-input,s3n://elasticmapreduce/samples/wordcount/input,-output,s3://s3-pipeline-emr/wordcount/output/#{@scheduledStartTime},-mapper,s3n://elasticmapreduce/samples/wordcount/wordSplitter.py,-reducer,aggregate",
+      "id": "EmrActivityId_6Qvp6",
+      "runsOn": {
+        "ref": "EmrClusterId_RXad5"
+      },
+      "type": "EmrActivity",
+      "onSuccess": {
+        "ref": "ActionId_r2vGe"
+      }
+    },
+    {
+      "name": "MyEmrCluster",
+      "id": "EmrClusterId_RXad5",
+      "type": "EmrCluster"
+    }
+  ],
+  "parameters": []
+}
