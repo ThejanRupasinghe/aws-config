@@ -32,9 +32,17 @@
     },
     {
       "name": "MyEmrCluster",
+      "masterInstanceType": "#{myEmrMasterNodeType}",
       "id": "EmrClusterId_RXad5",
       "type": "EmrCluster"
     }
   ],
-  "parameters": []
+  "parameters": [ {
+    "id": "myEmrMasterNodeType",
+    "type": "String"
+  }
+  ],
+  "values": {
+    "myEmrMasterNodeType": "m1.medium"
+  }
 }
