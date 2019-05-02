@@ -1,7 +1,7 @@
 {
   "objects": [
     {
-      "filePath": "s3://s3-pipeline-simple-copy/source/sampleData.csv",
+      "filePath": "#{mySourceFilePath}",
       "name": "SourceS3File",
       "id": "DataNodeId_bzBZE",
       "type": "S3DataNode"
@@ -13,27 +13,16 @@
       "id": "ActionId_R8AAv",
       "message": "Copying Failed.\n{\n \"pipelineId\":\"#{node.@pipelineId}\",\n \"id\":\"#{node.@id}\",\n \"nodeName\": \"#{node.name}\",\n \"scheduledStartTime\": \"#{node.@scheduledStartTime}\" \n}",
       "type": "SnsAlarm",
-      "topicArn": "arn:aws:sns:us-east-1:490982693988:pipeline-emr-topic"
+      "topicArn": "#{mySnsTopic}"
     },
     {
       "failureAndRerunMode": "CASCADE",
       "resourceRole": "DataPipelineDefaultResourceRole",
       "role": "DataPipelineDefaultRole",
-      "pipelineLogUri": "s3://s3-pipeline-simple-copy/logs/",
+      "pipelineLogUri": "s3://s3-datapipeline-data/pipeline-simple-copy/logs/",
       "scheduleType": "ONDEMAND",
       "name": "Default",
       "id": "Default"
-    },
-    {
-      "resourceRole": "DataPipelineDefaultResourceRole",
-      "role": "DataPipelineDefaultRole",
-      "instanceType": "m1.small",
-      "name": "CopyEC2",
-      "actionOnTaskFailure": "terminate",
-      "id": "ResourceId_vuY2M",
-      "type": "Ec2Resource",
-      "region": "us-east-1",
-      "terminateAfter": "1 Hour"
     },
     {
       "role": "DataPipelineDefaultRole",
@@ -42,7 +31,7 @@
       "id": "ActionId_cyyJm",
       "type": "SnsAlarm",
       "message": "Successfully Copied.",
-      "topicArn": "arn:aws:sns:us-east-1:490982693988:pipeline-emr-topic"
+      "topicArn": "#{mySnsTopic}"
     },
     {
       "output": {
@@ -57,20 +46,41 @@
       "maximumRetries": "0",
       "name": "SimpleCopy",
       "id": "CopyActivityId_XLoEL",
-      "runsOn": {
-        "ref": "ResourceId_vuY2M"
-      },
+      "workerGroup": "#{myWorkerGroup}",
       "type": "CopyActivity",
       "onSuccess": {
         "ref": "ActionId_cyyJm"
       }
     },
     {
-      "filePath": "s3://s3-pipeline-simple-copy/target/sampleDataCopy-#{format(@scheduledStartTime,'YYYY-MM-dd-HH')}.csv",
+      "filePath": "#{myTargetFolderPath}/sampleDataCopy-#{format(@scheduledStartTime,'YYYY-MM-dd-HH')}.csv",
       "name": "TargetS3Folder",
       "id": "DataNodeId_aiqCU",
       "type": "S3DataNode"
     }
   ],
-  "parameters": []
+  "parameters": [
+    {
+      "id": "myWorkerGroup",
+      "type": "String"
+    },
+    {
+      "id": "mySnsTopic",
+      "type": "String"
+    },
+    {
+      "id": "mySourceFilePath",
+      "type": "String"
+    },
+    {
+      "id": "myTargetFolderPath",
+      "type": "String"
+    }
+  ],
+  "values":{
+    "myWorkerGroup": "myWorkerGroup",
+    "mySnsTopic": "arn:aws:sns:us-east-1:490982693988:datapipeline-topic",
+    "myTargetFolderPath": "s3://s3-datapipeline-data/pipeline-simple-copy/target",
+    "mySourceFilePath": "s3://s3-datapipeline-data/pipeline-simple-copy/source/sampleData.csv"
+  }
 }
