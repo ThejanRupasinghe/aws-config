@@ -2,6 +2,15 @@
     "AWSTemplateFormatVersion": "2010-09-09",
     "Description": "This template will provision a common datapipeline based infrastructure.",
     "Parameters": {
+        "Environment": {
+            "Description": "Environment of the stack",
+            "Type": "String",
+            "AllowedValues": [
+                "dev",
+                "stg",
+                "prod"
+            ]
+        },
         "KeyName": {
             "Description": "Name of an existing EC2 KeyPair to enable SSH access to the instance",
             "Type": "AWS::EC2::KeyPair::KeyName",
@@ -35,6 +44,15 @@
             "Description": "Role for the EC2 server which has the task runner.",
             "Type": "String",
             "Default": "DataPipelineDefaultResourceRole"
+        },
+        "DatapipelineWorkerGroup": {
+            "Description": "WorkerGroup name for datapipelines. (configured in EC2 task runner)",
+            "Type": "String",
+            "Default": "myWorkerGroup"
+        },
+        "SNSSubscriptions": {
+            "Description": "A subscription email address for the SNS topic.",
+            "Type": "String"
         }
     },
     "Resources": {
@@ -58,10 +76,54 @@
                 "IamInstanceProfile": {
                     "Ref": "EC2Role"
                 },
+                "UserData": {
+                    "Fn::Base64": {
+                        "Fn::Join": [
+                            "",
+                            [
+                                "#!/bin/bash\n",
+                                "mkdir downloads\n",
+                                "cd downloads\n",
+                                "sudo apt -y update\n",
+                                "sudo apt -y install openjdk-8-jre-headless\n",
+                                "java -version\n",
+                                "wget https://s3.amazonaws.com/datapipeline-us-east-1/us-east-1/software/latest/TaskRunner/TaskRunner-1.0.jar\n",
+                                "nohup java -jar TaskRunner-1.0.jar --workerGroup=",
+                                {
+                                    "Ref": "DatapipelineWorkerGroup"
+                                },
+                                " --region=",
+                                {
+                                    "Ref": "AWS::Region"
+                                },
+                                " --logUri=s3://",
+                                {
+                                    "Ref": "S3Bucket"
+                                },
+                                "/runner-logs\n"
+                            ]
+                        ]
+                    }
+                },
                 "Tags": [
                     {
                         "Key": "Name",
-                        "Value": "datapipeline-task-runner"
+                        "Value": {
+                            "Fn::Join": [
+                                "",
+                                [
+                                    {
+                                        "Ref": "Environment"
+                                    },
+                                    "-",
+                                    {
+                                        "Ref": "AWS::StackName"
+                                    },
+                                    "-",
+                                    "task-runner"
+                                ]
+                            ]
+                        }
                     }
                 ]
             }
@@ -69,22 +131,558 @@
         "InstanceSecurityGroup": {
             "Type": "AWS::EC2::SecurityGroup",
             "Properties": {
-                "GroupName": "datapipeline-task-runner-sec-group",
+                "GroupName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "Environment"
+                            },
+                            "-",
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "-",
+                            "task-runner-sec-group"
+                        ]
+                    ]
+                },
                 "GroupDescription": "Enable SSH and HTTPS access via port 22 and 443",
                 "SecurityGroupIngress": [
                     {
                         "IpProtocol": "tcp",
-                        "FromPort": "22",
-                        "ToPort": "22",
+                        "FromPort": 22,
+                        "ToPort": 22,
                         "CidrIp": {
                             "Ref": "SSHLocation"
                         }
                     },
                     {
                         "IpProtocol": "tcp",
-                        "FromPort": "443",
-                        "ToPort": "443",
+                        "FromPort": 443,
+                        "ToPort": 443,
                         "CidrIp": "0.0.0.0/0"
+                    }
+                ]
+            }
+        },
+        "SNSTopic": {
+            "Type": "AWS::SNS::Topic",
+            "Properties": {
+                "DisplayName": "Common Topic for Datapipeline notifications",
+                "Subscription": [
+                    {
+                        "Endpoint": {
+                            "Ref": "SNSSubscriptions"
+                        },
+                        "Protocol": "Email"
+                    }
+                ],
+                "TopicName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "Environment"
+                            },
+                            "-",
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "-",
+                            "topic"
+                        ]
+                    ]
+                }
+            }
+        },
+        "S3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "AccessControl": "Private",
+                "BucketName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "Environment"
+                            },
+                            "-",
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "-",
+                            "data"
+                        ]
+                    ]
+                }
+            },
+            "DeletionPolicy": "Delete"
+        },
+        "LambdaRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": [
+                                    "lambda.amazonaws.com"
+                                ]
+                            },
+                            "Action": [
+                                "sts:AssumeRole"
+                            ]
+                        }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyName": "DatapipelineInvoke",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Action": [
+                                        "datapipeline:ListPipelines",
+                                        "datapipeline:ActivatePipeline"
+                                    ],
+                                    "Resource": [
+                                        "*"
+                                    ],
+                                    "Effect": "Allow"
+                                },
+                                {
+                                    "Action": [
+                                        "iam:PassRole"
+                                    ],
+                                    "Resource": [
+                                        "*"
+                                    ],
+                                    "Effect": "Allow"
+                                },
+                                {
+                                    "Action": [
+                                        "ssm:GetParameter"
+                                    ],
+                                    "Resource": [
+                                        "*"
+                                    ],
+                                    "Effect": "Allow"
+                                }
+                            ]
+                        }
+                    }
+                ],
+                "RoleName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "Environment"
+                            },
+                            "-",
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "-",
+                            "LambdaDatapipelineInvokeRole"
+                        ]
+                    ]
+                }
+            }
+        },
+        "DatapipelineInvokeLambda": {
+            "Type": "AWS::Lambda::Function",
+            "Properties": {
+                "Handler": "invoke-pipeline-param.lambda_handler",
+                "Description": "Lambda function to invoke the datapipeline",
+                "Role": {
+                    "Fn::GetAtt": [
+                        "LambdaRole",
+                        "Arn"
+                    ]
+                },
+                "Runtime": "python3.7",
+                "Code": {
+                    "S3Bucket": "s3-datapipeline-data",
+                    "S3Key": "invoke-pipeline-param.zip"
+                },
+                "Environment": {
+                    "Variables": {
+                        "PipelineName": {
+                            "Fn::Join": [
+                                "",
+                                [
+                                    {
+                                        "Ref": "Environment"
+                                    },
+                                    "-",
+                                    {
+                                        "Ref": "AWS::StackName"
+                                    },
+                                    "-",
+                                    "pipeline-simple-copy"
+                                ]
+                            ]
+                        },
+                        "Environment": {
+                            "Ref": "Environment"
+                        },
+                        "SourceFilePath": "s3://s3-datapipeline-data/pipeline-simple-copy/source/sampleData.csv",
+                        "TargetFolderPath": {
+                            "Fn::Join": [
+                                "",
+                                [
+                                    "s3://",
+                                    {
+                                        "Ref": "S3Bucket"
+                                    },
+                                    "/pipeline-simple-copy/target"
+                                ]
+                            ]
+                        }
+                    }
+                },
+                "FunctionName": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "Environment"
+                            },
+                            "-",
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "-",
+                            "invoke-pipeline-param"
+                        ]
+                    ]
+                }
+            }
+        },
+        "DPWorkerGroupParameter": {
+            "Type": "AWS::SSM::Parameter",
+            "Properties": {
+                "Name": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "/",
+                            {
+                                "Ref": "Environment"
+                            },
+                            "/Datapipeline/WorkerGroup"
+                        ]
+                    ]
+                },
+                "Type": "String",
+                "Value": {
+                    "Ref": "DatapipelineWorkerGroup"
+                },
+                "Description": "SSM Parameter for Datapipeline worker group"
+            }
+        },
+        "DPSNSParameter": {
+            "Type": "AWS::SSM::Parameter",
+            "Properties": {
+                "Name": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            "/",
+                            {
+                                "Ref": "Environment"
+                            },
+                            "/Datapipeline/SnsTopic"
+                        ]
+                    ]
+                },
+                "Type": "String",
+                "Value": {
+                    "Ref": "SNSTopic"
+                },
+                "Description": "SSM Parameter for Datapipeline SNS topic ARN"
+            }
+        },
+        "SimpleCopyDatapipeline": {
+            "Type": "AWS::DataPipeline::Pipeline",
+            "Properties": {
+                "Activate": false,
+                "Description": "Datapipeline to do a simple copy activity.",
+                "Name": {
+                    "Fn::Join": [
+                        "",
+                        [
+                            {
+                                "Ref": "Environment"
+                            },
+                            "-",
+                            {
+                                "Ref": "AWS::StackName"
+                            },
+                            "-",
+                            "pipeline-simple-copy"
+                        ]
+                    ]
+                },
+                "ParameterObjects": [
+                    {
+                        "Id": "myWorkerGroup",
+                        "Attributes": [
+                            {
+                                "Key": "description",
+                                "StringValue": "Task runner worker group"
+                            },
+                            {
+                                "Key": "type",
+                                "StringValue": "String"
+                            },
+                            {
+                                "Key": "default",
+                                "StringValue": {
+                                    "Ref": "DatapipelineWorkerGroup"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "mySnsTopic",
+                        "Attributes": [
+                            {
+                                "Key": "description",
+                                "StringValue": "SNS topic to send success/fail notifications"
+                            },
+                            {
+                                "Key": "type",
+                                "StringValue": "String"
+                            },
+                            {
+                                "Key": "default",
+                                "StringValue": {
+                                    "Ref": "SNSTopic"
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "mySourceFilePath",
+                        "Attributes": [
+                            {
+                                "Key": "description",
+                                "StringValue": "Path to the source file to be copied"
+                            },
+                            {
+                                "Key": "type",
+                                "StringValue": "String"
+                            },
+                            {
+                                "Key": "default",
+                                "StringValue": "s3://s3-datapipeline-data/pipeline-simple-copy/source/sampleData.csv"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "myTargetFolderPath",
+                        "Attributes": [
+                            {
+                                "Key": "description",
+                                "StringValue": "Target folder path to copy the file"
+                            },
+                            {
+                                "Key": "type",
+                                "StringValue": "String"
+                            },
+                            {
+                                "Key": "default",
+                                "StringValue": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "s3://",
+                                            {
+                                                "Ref": "S3Bucket"
+                                            },
+                                            "/pipeline-simple-copy/target"
+                                        ]
+                                    ]
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "ParameterValues": [
+                    {
+                        "Id": "myWorkerGroup",
+                        "StringValue": {
+                            "Ref": "DatapipelineWorkerGroup"
+                        }
+                    },
+                    {
+                        "Id": "mySnsTopic",
+                        "StringValue": {
+                            "Ref": "SNSTopic"
+                        }
+                    }
+                ],
+                "PipelineObjects": [
+                    {
+                        "Id": "DataNodeId_bzBZE",
+                        "Name": "SourceS3File",
+                        "Fields": [
+                            {
+                                "Key": "filePath",
+                                "StringValue": "#{mySourceFilePath}"
+                            },
+                            {
+                                "Key": "type",
+                                "StringValue": "S3DataNode"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "ActionId_R8AAv",
+                        "Name": "CopyFailed",
+                        "Fields": [
+                            {
+                                "Key": "role",
+                                "StringValue": "DataPipelineDefaultRole"
+                            },
+                            {
+                                "Key": "subject",
+                                "StringValue": "pipeline-simple-copy"
+                            },
+                            {
+                                "Key": "message",
+                                "StringValue": "Copying Failed.\n{\n \"pipelineId\":\"#{node.@pipelineId}\",\n \"id\":\"#{node.@id}\",\n \"nodeName\": \"#{node.name}\",\n \"scheduledStartTime\": \"#{node.@scheduledStartTime}\" \n}"
+                            },
+                            {
+                                "Key": "type",
+                                "StringValue": "SnsAlarm"
+                            },
+                            {
+                                "Key": "topicArn",
+                                "StringValue": "#{mySnsTopic}"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "Default",
+                        "Name": "Default",
+                        "Fields": [
+                            {
+                                "Key": "failureAndRerunMode",
+                                "StringValue": "CASCADE"
+                            },
+                            {
+                                "Key": "resourceRole",
+                                "StringValue": "DataPipelineDefaultResourceRole"
+                            },
+                            {
+                                "Key": "role",
+                                "StringValue": "DataPipelineDefaultRole"
+                            },
+                            {
+                                "Key": "pipelineLogUri",
+                                "StringValue": {
+                                    "Fn::Join": [
+                                        "",
+                                        [
+                                            "s3://",
+                                            {
+                                                "Ref": "S3Bucket"
+                                            },
+                                            "/pipeline-simple-copy/logs/"
+                                        ]
+                                    ]
+                                }
+                            },
+                            {
+                                "Key": "scheduleType",
+                                "StringValue": "ONDEMAND"
+                            },
+                            {
+                                "Key": "type",
+                                "StringValue": "Default"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "ActionId_cyyJm",
+                        "Name": "CopySuccess",
+                        "Fields": [
+                            {
+                                "Key": "role",
+                                "StringValue": "DataPipelineDefaultRole"
+                            },
+                            {
+                                "Key": "subject",
+                                "StringValue": "pipeline-simple-copy"
+                            },
+                            {
+                                "Key": "type",
+                                "StringValue": "SnsAlarm"
+                            },
+                            {
+                                "Key": "message",
+                                "StringValue": "Successfully Copied."
+                            },
+                            {
+                                "Key": "topicArn",
+                                "StringValue": "#{mySnsTopic}"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "CopyActivityId_XLoEL",
+                        "Name": "SimpleCopy",
+                        "Fields": [
+                            {
+                                "Key": "output",
+                                "RefValue": "DataNodeId_aiqCU"
+                            },
+                            {
+                                "Key": "input",
+                                "RefValue": "DataNodeId_bzBZE"
+                            },
+                            {
+                                "Key": "onFail",
+                                "RefValue": "ActionId_R8AAv"
+                            },
+                            {
+                                "Key": "maximumRetries",
+                                "StringValue": "0"
+                            },
+                            {
+                                "Key": "workerGroup",
+                                "StringValue": "#{myWorkerGroup}"
+                            },
+                            {
+                                "Key": "type",
+                                "StringValue": "CopyActivity"
+                            },
+                            {
+                                "Key": "onSuccess",
+                                "RefValue": "ActionId_cyyJm"
+                            }
+                        ]
+                    },
+                    {
+                        "Id": "DataNodeId_aiqCU",
+                        "Name": "TargetS3Folder",
+                        "Fields": [
+                            {
+                                "Key": "filePath",
+                                "StringValue": "#{myTargetFolderPath}/sampleDataCopy-#{format(@scheduledStartTime,'YYYY-MM-dd-HH')}.csv"
+                            },
+                            {
+                                "Key": "type",
+                                "StringValue": "S3DataNode"
+                            }
+                        ]
                     }
                 ]
             }
